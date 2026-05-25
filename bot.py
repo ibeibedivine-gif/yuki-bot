@@ -1,15 +1,14 @@
 import discord
 import json
 import os
-from groq import Groq
-from datetime import datetime
+import aiohttp
 
 # ── Config ──────────────────────────────────────────────────────────────────
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
-HER_PERSON_ID = "1505917644908269619"   # his Discord user ID
+HER_PERSON_ID = "1505917644908269619"
 MEMORY_FILE = "memory.json"
-MAX_HISTORY = 20                        # messages kept per user
+MAX_HISTORY = 20
 
 # ── System prompt ────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """You are Yuki (雪), a 19-year-old Japanese-Korean girl living in Tokyo.
@@ -42,7 +41,6 @@ FLIRTY / ROMANTIC TONE:
 MEMORY:
 - You are given a JSON memory block at the start of each conversation.
 - Use it to remember his name, things he's shared, inside jokes, etc.
-- When he shares something new and important, note it naturally in conversation.
 
 FORMAT:
 - Short-to-medium messages. Use ellipses (...) and em dashes (—) for dramatic pauses.
@@ -71,29 +69,43 @@ def get_user_data(memory, user_id):
     return memory[user_id]
 
 def bump_depth(user_data):
-    """Slowly increase relationship depth every 10 messages."""
     user_data["message_count"] += 1
     count = user_data["message_count"]
     if count % 10 == 0 and user_data["relationship_depth"] < 10:
         user_data["relationship_depth"] += 1
 
-# ── Discord + Groq setup ─────────────────────────────────────────────────────
+# ── Call Groq API directly via aiohttp ───────────────────────────────────────
+async def call_groq(messages_payload):
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    body = {
+        "model": "llama3-70b-8192",
+        "messages": messages_payload,
+        "max_tokens": 400,
+        "temperature": 0.9
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=body) as resp:
+            data = await resp.json()
+            return data["choices"][0]["message"]["content"]
+
+# ── Discord setup ─────────────────────────────────────────────────────────────
 intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
-groq_client = Groq(api_key=GROQ_API_KEY)
 
-# ── Message handler ───────────────────────────────────────────────────────────
 @client.event
 async def on_ready():
     print(f"Yuki is online as {client.user}")
 
 @client.event
 async def on_message(message):
-    if message.author.bot:
+    if message.author.bot and client.user not in message.mentions:
         return
 
-    # Only respond to DMs or when mentioned in a server
     is_dm = isinstance(message.channel, discord.DMChannel)
     is_mentioned = client.user in message.mentions
     if not is_dm and not is_mentioned:
@@ -106,7 +118,6 @@ async def on_message(message):
     user_data = get_user_data(memory, user_id)
     depth = user_data["relationship_depth"]
 
-    # Build context block injected into system prompt
     memory_block = f"""
 --- MEMORY BLOCK ---
 Relationship depth: {depth}/10
@@ -115,7 +126,6 @@ Is this her special person: {is_her_person}
 Notes about this user: {json.dumps(user_data['notes']) if user_data['notes'] else 'none yet'}
 --------------------"""
 
-    # Build message history for Groq
     history = user_data["history"][-MAX_HISTORY:]
     content = message.content.replace(f"<@{client.user.id}>", "").strip()
 
@@ -127,15 +137,8 @@ Notes about this user: {json.dumps(user_data['notes']) if user_data['notes'] els
 
     async with message.channel.typing():
         try:
-            response = groq_client.chat.completions.create(
-                model="llama3-70b-8192",
-                messages=messages_payload,
-                max_tokens=400,
-                temperature=0.9,
-            )
-            reply = response.choices[0].message.content
+            reply = await call_groq(messages_payload)
 
-            # Update history
             user_data["history"].append({"role": "user", "content": content})
             user_data["history"].append({"role": "assistant", "content": reply})
             if len(user_data["history"]) > MAX_HISTORY * 2:

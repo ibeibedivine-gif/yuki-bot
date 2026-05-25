@@ -97,6 +97,7 @@ async def call_groq(messages_payload):
 intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
+processed = set()
 
 @client.event
 async def on_ready():
@@ -104,6 +105,12 @@ async def on_ready():
 
 @client.event
 async def on_message(message):
+    if message.id in processed:
+        return
+    processed.add(message.id)
+    if len(processed) > 1000:
+        processed.clear()
+
     if message.author.bot and client.user not in message.mentions:
         return
 

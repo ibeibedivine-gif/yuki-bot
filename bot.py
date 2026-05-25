@@ -82,7 +82,7 @@ async def call_groq(messages_payload):
         "Content-Type": "application/json"
     }
     body = {
-        "model": "llama3-70b-8192",
+        "model": "llama-3.3-70b-versatile",
         "messages": messages_payload,
         "max_tokens": 400,
         "temperature": 0.9

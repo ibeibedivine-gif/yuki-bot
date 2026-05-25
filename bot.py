@@ -90,6 +90,7 @@ async def call_groq(messages_payload):
     async with aiohttp.ClientSession() as session:
         async with session.post(url, headers=headers, json=body) as resp:
             data = await resp.json()
+            print(f"Groq status: {resp.status} | Response: {data}")
             return data["choices"][0]["message"]["content"]
 
 # ── Discord setup ─────────────────────────────────────────────────────────────
